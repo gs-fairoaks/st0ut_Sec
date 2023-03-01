@@ -1,0 +1,376 @@
+#!/usr/bin/python3
+#imports
+import json
+import requests
+import os
+import datetime
+import csv
+import time
+from pprint import pprint
+'''This will gather all failed replibit backups in the last 24hours
+    Get the cusomters name and agreements
+    Verify the ticket has an agreement attached
+    If not the find agreements and report'''
+#Global vars
+# ya get your backups for nuthin' and the:
+work4free = []
+agree_file = 'agreements.json'
+csv_file = 'replibit_agreement_change.csv'
+# code here for auth to connectwise
+def create_changecsv():
+    new_file = open((csv_file), 'w', newline='')
+    newf = csv.writer(new_file, delimiter=',')
+    # config companty name
+    # configManchine name, 
+    # config"frinedly Name", 
+    # original config['contact'] newconfig[contact]
+    newf.writerow(['Company Name', 'Ticket number', 'Time Entry', 
+                   'Agreement Name', 'Agreement ID'])
+    new_file.close()
+    return
+def get_agreements():
+    '''This functions gther agreements for us in tickets analysis'''
+    agree_URL = 'https://api-na.myconnectwise.net/v4_6_release/apis/3.0/finance/agreements/'
+    cnt = 'count'
+    cnt_agrees = requests.get(f'{agree_URL}{cnt}', headers=cwHeaders)
+    if cnt_agrees.status_code == 200:
+        cnt_agree = cnt_agrees.json()
+        with open('cntagrees.json', 'w') as cnt_file:
+            json.dump(cnt_agree, cnt_file)
+        with open('cntagrees.json', 'r') as cnt_ag:
+            cntagree  = json.load(cnt_ag)
+            cnt = cntagree.get('count')
+            print(cnt)
+            pageSizeInt = (cnt + 1)
+            pageSize = str(pageSizeInt)
+            print(pageSize)
+    else:
+        print(cnt_agrees.status_code)
+    page_string = {'pageSize':(pageSize)}
+    get_agrees = requests.get(f'{agree_URL}', params=page_string, headers=cwHeaders)
+    if get_agrees.status_code == 200:
+        print('Got Agreements')
+        ga_data = get_agrees.json()
+        with open((agree_file), 'w') as af:
+            json.dump(ga_data, af)
+    else:
+        print(get_agrees.status_code)
+        quit()
+def bkup_tic():
+    ''''This Function will find the last paage of tickets 2 pages of tickets backup board(Board 28)'''
+    ticcntURL = "https://api-na.myconnectwise.net/v4_6_release/apis/3.0/service/tickets/count"
+    get_count = {"conditions":"board/id=28"}
+    # need to clean line below up
+    cntreq = requests.get(ticcntURL, params=get_count, headers=cwHeaders)
+    if cntreq.status_code == 200:
+        cntData = cntreq.json()
+        with open('cntbkuptic.json', 'w') as cnt_file:
+            json.dump(cntData, cnt_file)
+        with open('cntbkuptic.json', 'r') as cnt_kp:
+            cntDict  = json.load(cnt_kp)
+            cnt = cntDict.get('count')
+            print(cnt)
+            pageCntInt = (cnt + 999) // 1000
+            pgCnt = str(pageCntInt)
+            print(pgCnt)
+    else:
+        print(cntreq.status_code)
+    #
+    minusPage = pageCntInt - 1
+    print(minusPage)
+    bkupFiles = []
+    while minusPage <= pageCntInt:
+        print(minusPage)
+        #ticURL = "https://api-na.myconnectwise.net/v4_6_release/apis/3.0/service/tickets/"
+        queryString = {"conditions":"board/id=28","page":str(minusPage),"pageSize":"1000"}
+        req = requests.get(ticURL, params=queryString, headers=cwHeaders) 
+        if req.status_code == 200:
+            data = req.json()
+            with open('bkup_tick.json', 'w') as bkup_board:
+                json.dump(data, bkup_board)
+        else:
+            print(req.status_code)
+            return
+        orgName = 'bkup_tick.json'
+        newName = 'bkup_tick'+str(minusPage)+'.json'
+        os.rename(orgName, newName)
+        bkupFiles.append(newName)
+        minusPage += 1
+    return bkupFiles
+def extract_tick(file):
+    ''' This functions will read the file with the new tickets
+     Convert the json into a dictionary for logic'''
+    expFiles = 1
+    tick_list = []
+    global ticket
+    for i in range (expFiles):
+        with open((file), 'r') as raw:
+            data = json.load(raw)
+            for ticket in data:
+                tick_list.append(ticket)
+                ticket_meta(ticket)
+            return
+    return
+def ticket_meta(ticket):
+    '''This function will parce the ticket dictionary 
+    for meta data to determine if the ticket was worked with no agreggment'''
+    #pprint(ticket)
+    ag_agree = None
+    ag_name = None
+    try: 
+        ticket_num = ticket['id']
+    except:
+        pass
+    print('Starting process for ticket', (ticket_num))
+    #if tick_agree:
+    #    aggree_dict = tick_agree
+    try:   
+        company_id = ticket['company']['id']
+        company_name = ticket['company']['name']
+    except:
+        pass
+    if (company_id) == 250:
+        print('Company is Fairoaks returning')
+        return
+    if (company_id) == 19298:
+        print('Company is Catchall returning')
+        return
+    try:
+        date_entered = ticket['_info']['dateEntered']
+        date, time = date_entered.split('T')
+        ticyy, ticmm, ticdd = date.split('-')
+        ticyy = int(ticyy)
+        ticmm = int(ticmm)
+        ticdd = int(ticdd)
+        day = datetime.date.today()
+        #print('Today is:', (day))
+        #day = str(day)
+        yy, mm, dd = day.year, day.month, day.day
+        tic_date = ((ticyy), (ticmm), (ticdd))
+        day_date = ((yy), (mm), (dd))
+        tic_date = datetime.date(*tic_date)
+        day_date = datetime.date(*day_date)
+        day_diff = day_date - tic_date
+        #if day_diff > datetime.timedelta(days=1):
+        if day_diff > datetime.timedelta(days=30):
+        #if day_diff > datetime.timedelta(days=5):
+            #print('More than a day old getting next ticket')
+            return
+    except:
+        pass
+    try:
+        status = ticket['status']
+        if status == 'open':
+            #print('Not ready for review getting next ticket')
+            # potential change for future to not use this
+            return
+    except:
+        pass
+    try:
+        agreement_id = ticket['agreement']['id']
+        agreement_name = ticket['agreement']['name']
+        print('Meta Function has Agreement ID', (agreement_id) and (agreement_name))
+    except:
+        agreement_id = None
+        print('Agreement is no found:', (agreement_id))
+        set_agree = set_agreement(ticket_num, company_id)
+        if set_agree:
+            ag_agree, ag_name = set_agree
+            agreement_id = ag_agree
+            print('Agreemnt ID is:', (agreement_id))
+            agreement_name = ag_name
+            print('Agreement name is:', (agreement_name))
+            #agreement_name = ag_name
+    #verify time entries
+    time_agree = TE_Agree(ticket_num, agreement_id, agreement_name)
+    '''print('need to lynn to look at this')
+        print('Ticket Number: ', (ticket_num))
+        print('Company Name: ', (company_id))'''
+        #if hours_worked == None:
+        #    return
+        # Get Agreement
+        #   --perform API call for time entries per ticket
+        #  ---making the tickets is the heavy lifting manual porcesss
+        # Get company
+        # if Active total care # core or std
+        # 
+        # catchall logic
+#
+def TE_Agree(ticket_num, agreement_id, agreement_name):
+    '''this function will get the list of time entires and 
+    get the agreement number from each time entry in the ticket'''
+    print('ticket number from meta:', (ticket_num))
+    print('Agreement id from meta', (agreement_id))
+    te_URL = 'https://api-na.myconnectwise.net/v4_6_release/apis/3.0//time/entries/'
+    #Get ticket time entires
+    te_list = []
+    te_get = requests.get(f'{ticURL}{ticket_num}/timeentries', headers=cwHeaders)
+    if te_get.status_code == 200:
+        data = te_get.json()
+        with open('tick_time_enteries.json', 'w') as time_entries:
+            json.dump(data, time_entries)
+            for entries in data:
+                te_list.append(entries)
+    else:
+        print(te_get.status_code)
+        print(te_get.text)
+        print(te_get.content)
+        return
+    for te in te_list:
+        te_id = te['id']
+        #print('Ticket numer: ', (ticket_num))
+        #print('Ticket agreement: ', (agreement_id))
+        #print('Time Entry ID: ', (te_id))
+        get_te = requests.get(f'{te_URL}{te_id}', headers=cwHeaders)
+        if get_te.status_code == 200:
+            data_te = get_te.json()
+            with open('time_entry.json', 'w') as time_entry:
+                json.dump(data_te, time_entry)
+                #pprint(data_te)
+                try:
+                    te_agree = data_te['agreement']['id']
+                except:
+                    #print('No agreement found in time entry', (te_id))
+                    te_agree = None
+                try:
+                    te_company = data_te['company']['name']
+                except:
+                    te_company = None
+
+        else:
+            print(get_te.status_code)
+            print(get_te.text)
+            print(get_te.content)
+            return
+        print('TE Agree Function')
+        print('Ticket number', (ticket_num))
+        print('Agreement ID:', (agreement_id))
+        print('Time entry', (te_id))
+        print('Company in time Entry:', (te_company))
+        print('agreement in time entry', (te_agree))
+        if (agreement_id) != (te_agree):
+            print('Overriding time entry agreement')
+            try:
+                data_te['agreement']['id'] = (agreement_id)
+                data_te['agreement']['name'] = (agreement_name)
+                payload = json.dumps(data_te)
+            except:
+                print('key error on time entry', (te_id))
+                print("Setting data_te['agreement'] to ", (agreement_id))
+                data_te['agreement'] = {'id':agreement_id}
+                data_te['agreement']['name'] = (agreement_name)
+                payload = json.dumps(data_te)
+                pass
+            put_te = requests.put(f'{te_URL}{te_id}', data=payload, headers=cwHeaders)
+            if put_te.status_code == 200:
+                print('Success')
+            else:
+                print(put_te.status_code)
+                print(put_te.text)
+                print(put_te.content)
+            with open((csv_file), 'a', newline='') as importFile:
+                csv_f = csv.writer(importFile, delimiter=',')
+                csv_f.writerow([(te_company),(ticket_num), (te_id), 
+                (data_te['agreement']['name']), (data_te['agreement']['id'])])
+            return
+        else:
+            pass
+
+#
+def set_agreement(ticket_num, company_id):
+    '''this function will assign an agreement if possible to the parent ticket'''
+    print('set_agreement called')
+    print('Setting agreement for ticket:', ticket_num)
+    print('Getting agreemts for company', company_id)
+   # https://api-na.myconnectwise.net/v4_6_release/apis/3.0//finance/agreements?conditions=company/id=23233
+    ag_URL = "https://api-na.myconnectwise.net/v4_6_release/apis/3.0//finance/agreements"
+    #query_string = {"conditions":f'company/id={company_id}'} # this works fall back to it
+    query_string = f'conditions=agreementStatus="Active" and company/id={company_id}'
+    ag_data = []
+    ag_get = requests.get(f'{ag_URL}', params=query_string, headers=cwHeaders)
+    if ag_get.status_code == 200:
+        print('Got agreement data')
+        data = ag_get.json()
+        with open('agreements.json', 'w') as agree:
+            json.dump(data, agree)
+        for agree in data:
+            ag_data.append(agree)     
+    else:
+        print(ag_get.status_code)
+        print(ag_get.text)
+        print(ag_get.content)
+        return
+    '''orgName = 'agreements.json'
+    newName = 'agreements'+str(ticket_num)+'.json'
+    os.rename(orgName, newName)'''
+    '''add conditional logic to determine BEST type of aggreement
+    to attach to ticket
+    '''
+    type_ag_data = type(ag_data)
+    print(type_ag_data)
+    print(len(ag_data))
+    ln_agd = len(ag_data)
+    total = 19
+    core = 30
+    std = 31
+    dnum = 0
+    id_total = 0
+    id_core = 0
+    id_std = None
+    name_std = None
+    while dnum < ln_agd:
+        print( 'DNUMB is ', (dnum))
+        ag_type = ag_data[dnum]['type']['id']
+        print('Agreements type id id', (ag_type))
+        if ag_type == std:
+            id_std = ag_data[dnum]['id']
+            print('STD Agree = ', (id_std))
+            name_std = ag_data[dnum]['name']
+        elif ag_type == core:
+            id_core = ag_data[dnum]['id']
+            name_core = ag_data[dnum]['name']
+        elif ag_type == total:
+            id_total = ag_data[dnum]['id']
+            print('TotalCare Agree = ', (id_total))
+            name_total = ag_data[dnum]['name']
+        try:
+            parent_agree = ag_data[dnum]['parentAgreement']
+            if len(parent_agree) > 0:
+                id_total = ag_data[dnum]['parentAgreement']['id']
+                print('TotalCare Agree = ', (id_total))
+                name_total = ag_data[dnum]['parentAgreement']['name']
+        except:
+            pass
+        dnum += 1
+    if (id_total) > 0:
+        ag_agree = id_total
+        ag_name = name_total
+        print('Returning Total Care', (ag_agree), 'to Meta')
+        return ag_agree, ag_name
+    elif (id_core) > 0:
+        ag_agree = id_core
+        ag_name = name_core
+        print('Returning Core', (ag_agree), 'to Meta')
+        return ag_agree, ag_name
+    else:
+        ag_agree = id_std
+        ag_name = name_std
+        print('Returning STD', (ag_agree), 'to Meta')
+        return ag_agree, ag_name
+#
+create_changecsv()
+#get_agreements()
+bkup_tickets = bkup_tic()
+if bkup_tickets:
+    bkupFiles = bkup_tickets
+print(bkup_tickets)
+for file in bkup_tickets:
+    tickets = extract_tick(file)
+print(work4free)
+#
+# file clean up
+for file in bkup_tickets:
+    print(bkup_tickets)
+    os.remove(file)
+#for file in jsonContacts:
+#    os.remove(file)
